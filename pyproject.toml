@@ -1,0 +1,17 @@
+[project]
+name = "crucible"
+version = "0.1.0"
+description = "Medallion Golden Master testing framework"
+requires-python = ">=3.10"
+
+dependencies = [
+    "typer",
+    "rich",
+]
+
+[project.scripts]
+crucible = "crucible.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["crucible*"]
