@@ -162,6 +162,10 @@ class ComponentDashboardScreen(Screen):
             if chosen_action == "Run Staging":
                 return TransitionSignal(TransitionType.PUSH, "run_staging"), True
 
+            # ADD THIS DISPATCH FOR CLUSTER REVIEW: CHANGE TO REVERT TO NON TEST VERSION
+            if chosen_action == "Cluster Review":
+                return TransitionSignal(TransitionType.PUSH, "cluster_selection"), True
+
             return None, True
 
         if key == "q":

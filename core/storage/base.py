@@ -19,15 +19,16 @@ from crucible.core.storage.config import Config
 
 logger = logging.getLogger("crucible.storage")
 
-
 class LocalStorage:
     """
     Unified, filesystem-backed storage for Crucible.
     Handles Bronze (candidate pool), Silver (staging snapshots), and Gold (fixtures) layers.
     """
     def __init__(self, component_name: str) -> None:
-        self.component_name = component_name
-        self.resolver = component_name
+        # Guarantee lowercase hyphenated directory resolution (e.g., premises-parser)
+        clean_name = component_name.lower().replace("_", "-")
+        self.component_name = clean_name
+        self.resolver = clean_name
         self._sut: Optional[Any] = None
 
         env_root = os.getenv("CRUCIBLE_ROOT")
@@ -36,17 +37,18 @@ class LocalStorage:
         else:
             self.root = Path(os.getcwd()).resolve() / ".crucible"
 
-        base = self.root / "suites" / component_name
-        bronze_base = base / "Bronze"
-        silver_base = base / "Silver"
-        gold_base = base / "Gold"
+        base = self.root / "suites" / clean_name
+
+        # Case-insensitive directory matching fallback for Linux / WSL
+        silver_base = base / "Silver" if (base / "Silver").exists() else base / "silver"
+        gold_base = base / "Gold" if (base / "Gold").exists() else base / "gold"
+        bronze_base = base / "Bronze" if (base / "Bronze").exists() else base / "bronze"
 
         self.gold_path = gold_base / "fixtures.json"
         self.classes_path = gold_base / "classes.json"
         self.staging_path = silver_base / "snapshots.json"
         self.snapshot_cache_path = silver_base / "snapshot_cache.json"
         self.candidate_pool_path = bronze_base / "candidate_pool.txt"
-
         self.silver_path = self.staging_path
         self.golden_path = self.gold_path
 
@@ -94,10 +96,6 @@ class LocalStorage:
             self.snapshot_cache_path.unlink()
 
     def read_candidate_pool(self) -> List[str]:
-        """
-        Reads candidate_pool.txt safely, tolerating non-UTF-8 byte sequences
-        without throwing UnicodeDecodeError exceptions.
-        """
         if not self.candidate_pool_path.exists():
             return []
         try:
@@ -107,67 +105,24 @@ class LocalStorage:
             return []
 
     def sync_and_dedupe_candidate_pool(self) -> Dict[str, int]:
-        """
-        Deduplicates candidate_pool.txt, stripping malformed whitespace,
-        empty lines, and zero-width unicode artifacts atomically.
-        """
         raw_lines = self.read_candidate_pool()
-        
-        # Strip trailing/leading spaces, zero-width spaces (\u200b), and ignore blank lines
         cleaned = []
         for line in raw_lines:
             stripped = line.strip().strip("\u200b\ufeff")
             if stripped:
                 cleaned.append(stripped)
-
         unique_lines = list(dict.fromkeys(cleaned))
-        
-        # Write back clean lines atomically
         self.write_candidate_pool(unique_lines)
-
         return {
             "total_raw": len(raw_lines),
             "unique_count": len(unique_lines),
             "removed_duplicates": len(cleaned) - len(unique_lines),
-            "empty_lines_purged": len(raw_lines) - len(cleaned)
+            "empty_lines_purged": len(raw_lines) - len(cleaned),
         }
-
-    # def read_candidate_pool(self) -> List[str]:
-    #     if not self.candidate_pool_path.exists():
-    #         return []
-    #     raw = self.candidate_pool_path.read_bytes()
-    #     return [line for line in raw.decode("utf-8").splitlines() if line.strip()]
 
     def write_candidate_pool(self, lines: List[str]) -> None:
         content = "\n".join(lines) + ("\n" if lines else "")
         self._safe_write_bytes(self.candidate_pool_path, content.encode("utf-8"))
-
-    # def sync_and_dedupe_candidate_pool(self) -> Dict[str, int]:
-    #     """
-    #     Reads candidate_pool.txt, strips whitespace, deduplicates entries
-    #     deterministically while preserving order, and rewrites the clean file.
-    #     """
-    #     if not self.candidate_pool_path.exists():
-    #         return {"raw_count": 0, "unique_count": 0, "removed_duplicates": 0}
-
-    #     raw_lines = self.candidate_pool_path.read_text(encoding="utf-8").splitlines()
-
-    #     seen = set()
-    #     clean_lines = []
-
-    #     for line in raw_lines:
-    #         stripped = line.strip()
-    #         if stripped and stripped not in seen:
-    #             seen.add(stripped)
-    #             clean_lines.append(stripped)
-
-    #     self.write_candidate_pool(clean_lines)
-
-    #     return {
-    #         "raw_count": len(raw_lines),
-    #         "unique_count": len(clean_lines),
-    #         "removed_duplicates": len(raw_lines) - len(clean_lines)
-    #     }
 
     def append_candidate(self, line: str) -> None:
         line = line.strip()
@@ -183,17 +138,12 @@ class LocalStorage:
     def validate_and_stage_bronze_upload(self, incoming_lines: List[str]) -> Dict[str, Any]:
         existing_pool = set(self.read_candidate_pool())
         GLOBAL_MAX_LIMIT = 1000
-
         new_unique_lines = [
-            line.strip()
-            for line in incoming_lines
-            if line.strip() and line.strip() not in existing_pool
+            line.strip() for line in incoming_lines if line.strip() and line.strip() not in existing_pool
         ]
-
         current_count = len(existing_pool)
         remaining_capacity = max(0, GLOBAL_MAX_LIMIT - current_count)
         allowed_to_import = new_unique_lines[:remaining_capacity]
-
         return {
             "detected": len(incoming_lines),
             "duplicates_removed": len(incoming_lines) - len(new_unique_lines),
@@ -253,14 +203,12 @@ class LocalStorage:
         input_str = case_dict.get("input", "")
         cache = self._load_snapshot_cache()
         entries = cache.get("entries", {})
-
         if input_str in entries:
             live_output = entries[input_str]
         elif sut_adapter:
             live_output = sut_adapter(input_str) or {}
         else:
             live_output = {}
-
         return {
             "case_id": case_dict.get("id"),
             "raw_input": input_str,
@@ -271,22 +219,18 @@ class LocalStorage:
     def generate_snapshots(self, sut: Callable[[str], Any], component_config: dict) -> None:
         logger.info("============================================================")
         logger.info("SILVER LAYER GENERATION START (DECOUPLED ALIGNMENT MODE)")
-
         cached_sut_version = get_sut_version(component_config)
         cmd_str = component_config.get("command", "")
         cmd_sig = hashlib.sha1(cmd_str.encode()).hexdigest()[:8]
-
         lines = self.read_candidate_pool()
         golden = self.load_golden()
         golden_cases = golden.get("cases", [])
         staging = self.load_staging()
         existing_cases = {c["id"]: c for c in staging.get("cases", [])}
-
         unique_inputs: Dict[str, str] = {}
         for input_str in lines:
             cid = Config.make_id(input_str)
             unique_inputs[cid] = input_str
-
         for g in golden_cases:
             unique_inputs[g["id"]] = g["input"]
 
@@ -306,13 +250,11 @@ class LocalStorage:
         cache_entries = cache["entries"]
         roots = self.get_active_semantic_roots()
         target_root = normalize_jsonpath(roots[0]) if roots else ""
-
         normaliser = Normaliser(semantic_roots=roots, adapter_id=self.resolver)
         clustering_engine = self.clustering_engine
 
         raw_payloads: Dict[str, dict] = {}
         pending_inputs = []
-
         for cid, input_str in unique_inputs.items():
             if input_str in cache_entries:
                 raw_payloads[cid] = cache_entries[input_str]
@@ -321,10 +263,17 @@ class LocalStorage:
 
         if pending_inputs:
             logger.info(f"Computing {len(pending_inputs)} raw payloads via ThreadPoolExecutor.")
-
             def _fetch_payload(pair: tuple[str, str]) -> tuple[str, str, dict]:
                 c_id, inp_str = pair
-                return c_id, inp_str, (sut(inp_str) or {})
+                try:
+                    res = sut(inp_str)
+                    return c_id, inp_str, (res if res is not None else {})
+                except Exception as ex:
+                    return c_id, inp_str, {
+                        "__error__": True,
+                        "type": "UNHANDLED_EXCEPTION",
+                        "reason": str(ex),
+                    }
 
             max_workers = min(4, os.cpu_count() or 1)
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -336,7 +285,6 @@ class LocalStorage:
         final_cases = []
         for cid, input_str in unique_inputs.items():
             raw_payload = raw_payloads[cid]
-
             if isinstance(raw_payload, dict) and raw_payload.get("__error__"):
                 error_type = raw_payload.get("type", "UNKNOWN_EXECUTION_FAILURE")
                 final_cases.append({
@@ -405,11 +353,9 @@ class LocalStorage:
         }
 
         self._realign_staging_with_gold(output_payload, golden)
-
         packed_bytes = mjson.encode(output_payload)
         pretty_bytes = mjson.format(packed_bytes, indent=2)
         self._safe_write_bytes(self.silver_path, pretty_bytes + b"\n")
-
         self._write_snapshot_cache(cache, cached_sut_version, cmd_sig)
         logger.info("SILVER LAYER (SNAPSHOTS.JSON) COHERENTLY ALIGNED WITH GOLD")
 
@@ -423,6 +369,7 @@ class LocalStorage:
         for case in staging_payload.get("cases", []):
             if case["meta"].get("state") == "error":
                 continue
+
             cluster_id = case["meta"].get("cluster_id")
             if cluster_id in gold_by_cluster:
                 gold_case = gold_by_cluster[cluster_id]
@@ -467,7 +414,6 @@ class LocalStorage:
         staging = self.load_staging()
         staging_by_id = {c["id"]: c for c in staging.get("cases", [])}
         sut_ver = get_sut_version(component_config) if component_config else "UNKNOWN_SUT_VERSION"
-
         for cid in case_ids:
             case = staging_by_id.get(cid)
             if not case:
@@ -475,7 +421,6 @@ class LocalStorage:
             meta = case.setdefault("meta", {})
             meta["state"] = "accepted"
             meta["sut_version"] = sut_ver
-
         self._write_staging(staging)
 
     def bulk_reject(self, case_ids: List[str], component_config: Optional[dict] = None) -> None:
@@ -484,7 +429,6 @@ class LocalStorage:
         staging = self.load_staging()
         staging_by_id = {c["id"]: c for c in staging.get("cases", [])}
         sut_ver = get_sut_version(component_config) if component_config else "UNKNOWN_SUT_VERSION"
-
         for cid in case_ids:
             case = staging_by_id.get(cid)
             if not case:
@@ -492,7 +436,6 @@ class LocalStorage:
             meta = case.setdefault("meta", {})
             meta["state"] = "rejected"
             meta["sut_version"] = sut_ver
-
         self._write_staging(staging)
 
     def mark_accepted(self, case_id: str, component_config: Optional[dict] = None) -> None:
