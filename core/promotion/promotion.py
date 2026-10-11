@@ -81,3 +81,47 @@ def promote_cluster_representative(
     # ✅ Performance Fix: Batch approve all cluster items in a single I/O pass
     all_cluster_case_ids = [c["id"] for c in cluster_cases]
     storage.bulk_approve(all_cluster_case_ids, component_config=component_config)
+
+def reject_cluster_representative(storage: Any, cluster_id: str) -> None:
+    """
+    Flags all cases within a structural cluster as rejected (SUT bug),
+    suppressing them from active review queues uniformly.
+    """
+    staging = storage.load_staging()
+    cluster_cases = [
+        c for c in staging.get("cases", [])
+        if c.get("meta", {}).get("cluster_id") == cluster_id
+    ]
+    if not cluster_cases:
+        return
+    
+    case_ids = [c["id"] for c in cluster_cases]
+    component_config = {"command": storage.resolver}
+    storage.bulk_reject(case_ids, component_config=component_config)
+
+def unreject_cluster_representative(storage: Any, cluster_id: str) -> None:
+    """
+    Restores all cases within a rejected cluster back to pending status,
+    re-enabling them in active review queues.
+    """
+    staging = storage.load_staging()
+    cluster_cases = [
+        c for c in staging.get("cases", [])
+        if c.get("meta", {}).get("cluster_id") == cluster_id
+    ]
+    if not cluster_cases:
+        return
+    
+    case_ids = [c["id"] for c in cluster_cases]
+    component_config = {"command": storage.resolver}
+    
+    # Reset state to pending in storage
+    staging_by_id = {c["id"]: c for c in staging.get("cases", [])}
+    sut_ver = get_sut_version(component_config)
+    for cid in case_ids:
+        case = staging_by_id.get(cid)
+        if case:
+            meta = case.setdefault("meta", {})
+            meta["state"] = "pending"
+            meta["sut_version"] = sut_ver
+    storage._write_staging(staging)

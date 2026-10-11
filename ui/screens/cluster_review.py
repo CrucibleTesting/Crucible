@@ -148,6 +148,7 @@ class ClusterReviewScreen(Screen):
             self.json_scroll_offset = 0
             self.json_expansion_depth = 1
             self.cluster_id = self.ctx.get("current_cluster_id", "Unassigned")
+            self.page_title = f"CLUSTER REVIEW - {self.cluster_id}"
             
             raw_adapter = self.ctx.get("current_adapter", "UNKNOWN")
             self.component = raw_adapter.lower().replace("_", "-")
@@ -221,7 +222,7 @@ class ClusterReviewScreen(Screen):
             header_style="bold bright_white",
         )
         left_table.add_column("", width=2)
-        left_table.add_column("SAMPLE ID", ratio=1)
+        left_table.add_column("", ratio=1)
 
         selected_style = Style(color="cyan", bold=True)
         unselected_style = Style(color="white")
@@ -233,7 +234,8 @@ class ClusterReviewScreen(Screen):
                 is_sel = (idx == self.selected_index)
                 row_style = selected_style if is_sel else unselected_style
                 
-                s_id = str(sample.get("id", sample.get("name", f"item_{idx}")))[:16]
+                # Standardized enumerated test case naming
+                s_id = f"Case {idx + 1}"
                 
                 if is_sel:
                     pointer_text = Text("▶ ", style="bold cyan")
@@ -242,11 +244,11 @@ class ClusterReviewScreen(Screen):
                     
                 left_table.add_row(pointer_text, s_id, style=row_style)
 
-        # Left Panel: Dynamic count title and matching cyan cycle subtitle
+        # Left Panel: Dynamic count title and white cycle subtitle
         left_panel = Panel(
             left_table,
             title=f"[bold cyan]{len(self.samples)} Samples[/bold cyan]",
-            subtitle="[cyan][Space] Cycle[/cyan]",
+            subtitle="[white][Space] Cycle[/white]",
             subtitle_align="center",
             border_style="cyan",
             padding=(1, 1)
@@ -281,12 +283,12 @@ class ClusterReviewScreen(Screen):
         else:
             right_content = Text("No sample selected or tray is empty.", style="dim")
 
-        # Right Panel: Semantic Root Inspector title & navigation subtitle
-        subtitle = f"ID: {self.cluster_id} │ ↑/↓ Scroll │ ←/→ Depth"
+        # Right Panel: Electric blue title and border with white nav subtitle
+        right_subtitle = f"[white] ↑/↓ Scroll │ ←/→ Depth[/white]"
         right_panel = Panel(
             right_content,
             title="[bold cyan]Semantic Root Inspector[/bold cyan]",
-            subtitle=subtitle,
+            subtitle=right_subtitle,
             subtitle_align="right",
             border_style="cyan",
             padding=(1, 2)
@@ -327,30 +329,27 @@ class ClusterReviewScreen(Screen):
                 self.json_scroll_offset = 0
             return None, True
 
-        # Core Action: Promote sample
         if key == "p":
-            if self.samples and 0 <= self.selected_index < len(self.samples):
-                current_sample = self.samples[self.selected_index]
-                sample_id = current_sample.get("id", current_sample.get("name"))
+            if self.cluster_id and self.cluster_id != "Unassigned":
                 try:
-                    if hasattr(self.engine.broker, "promote_sample"):
-                        self.engine.broker.promote_sample(self.component, self.cluster_id, sample_id)
+                    if hasattr(self.engine.broker, "promote_cluster"):
+                        self.engine.broker.promote_cluster(self.component, self.cluster_id)
+                    return TransitionSignal(TransitionType.POP), True
                 except Exception as e:
                     if hasattr(self.engine, "_log_error"):
-                        self.engine._log_error(f"Failed to promote sample {sample_id}: {e}")
+                        self.engine._log_error(f"Failed to promote cluster {self.cluster_id}: {e}")
             return None, True
 
-        # Core Action: Reject sample
         if key == "r":
-            if self.samples and 0 <= self.selected_index < len(self.samples):
-                current_sample = self.samples[self.selected_index]
-                sample_id = current_sample.get("id", current_sample.get("name"))
+            if self.cluster_id and self.cluster_id != "Unassigned":
                 try:
-                    if hasattr(self.engine.broker, "reject_sample"):
-                        self.engine.broker.reject_sample(self.component, self.cluster_id, sample_id)
+                    if hasattr(self.engine.broker, "reject_cluster"):
+                        self.engine.broker.reject_cluster(self.component, self.cluster_id)
+                    return TransitionSignal(TransitionType.POP), True
                 except Exception as e:
                     if hasattr(self.engine, "_log_error"):
-                        self.engine._log_error(f"Failed to reject sample {sample_id}: {e}")
+                        self.engine._log_error(f"Failed to reject cluster {self.cluster_id}: {e}")
+                    return None, True
             return None, True
 
         # Back and Quit

@@ -1,1 +1,1 @@
-from .promotion import promote_cluster_representative
+from .promotion import promote_cluster_representative, reject_cluster_representative, unreject_cluster_representative

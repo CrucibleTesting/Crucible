@@ -19,7 +19,7 @@ GOLDEN_SCHEMA = {
                     "id": {"type": "string"},
                     "input": {"type": "string"},
                     # "expected": {"type": ["object", "null"]},
-                    "expected": {}
+                    "expected": {},
                     "meta": {
                         "type": "object",
                         "properties": {

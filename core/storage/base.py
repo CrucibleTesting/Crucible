@@ -161,7 +161,11 @@ class LocalStorage:
         return mjson.decode(raw, type=dict)
 
     def _write_staging(self, data: Dict[str, Any]) -> None:
-        self._safe_write_bytes(self.silver_path, mjson.encode(data) + b"\n")
+        # self._safe_write_bytes(self.silver_path, mjson.encode(data) + b"\n")
+        packed_bytes = mjson.encode(data)
+        pretty_bytes = mjson.format(packed_bytes, indent=2)
+        self._safe_write_bytes(self.silver_path, pretty_bytes + b"\n")
+
 
     def _load_snapshot_cache(self) -> Dict[str, Any]:
         if not self.snapshot_cache_path.exists():
@@ -395,8 +399,11 @@ class LocalStorage:
         return mjson.decode(raw, type=dict)
 
     def _write_golden(self, data: Dict[str, Any]) -> None:
-        self._safe_write_bytes(self.gold_path, mjson.encode(data) + b"\n")
-
+        # self._safe_write_bytes(self.gold_path, mjson.encode(data) + b"\n")
+        packed_bytes = mjson.encode(data)
+        pretty_bytes = mjson.format(packed_bytes, indent=2)
+        self._safe_write_bytes(self.gold_path, pretty_bytes + b"\n")
+        
     def load_classes(self) -> Dict[str, Any]:
         if not self.classes_path.exists():
             return {"classes": {}}
@@ -406,7 +413,10 @@ class LocalStorage:
         return mjson.decode(raw, type=dict)
 
     def write_classes(self, data: Dict[str, Any]) -> None:
-        self._safe_write_bytes(self.classes_path, mjson.encode(data) + b"\n")
+        # self._safe_write_bytes(self.classes_path, mjson.encode(data) + b"\n")
+        packed_bytes = mjson.encode(data)
+        pretty_bytes = mjson.format(packed_bytes, indent=2)
+        self._safe_write_bytes(self.classes_path, pretty_bytes + b"\n")
 
     def bulk_approve(self, case_ids: List[str], component_config: Optional[dict] = None) -> None:
         if not case_ids:

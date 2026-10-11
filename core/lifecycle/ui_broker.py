@@ -158,9 +158,29 @@ class CoreUIBroker(AbstractSystemBroker):
             "crashed_cases": crashed,
         }
 
+    # def get_cluster_table(self, component_id: str) -> List[Dict[str, Any]]:
+    #     """
+    #     Loads staging data for a component and returns simple cluster case counts.
+    #     """
+    #     clean_id = component_id.lower().replace("_", "-")
+    #     storage = LocalStorage(component_name=clean_id)
+    #     staging = storage.load_staging()
+    #     cases = staging.get("cases", [])
+        
+    #     clusters = defaultdict(int)
+    #     for case in cases:
+    #         cid = case.get("meta", {}).get("cluster_id", "Unassigned")
+    #         clusters[cid] += 1
+            
+    #     return [
+    #         {"cluster_id": cid, "count": count}
+    #         for cid, count in clusters.items()
+    #     ]
+
     def get_cluster_table(self, component_id: str) -> List[Dict[str, Any]]:
         """
-        Loads staging data for a component and returns simple cluster case counts.
+        Loads staging data for a component and returns simple cluster case counts,
+        excluding already promoted, accepted, or rejected cases.
         """
         clean_id = component_id.lower().replace("_", "-")
         storage = LocalStorage(component_name=clean_id)
@@ -169,12 +189,20 @@ class CoreUIBroker(AbstractSystemBroker):
         
         clusters = defaultdict(int)
         for case in cases:
-            cid = case.get("meta", {}).get("cluster_id", "Unassigned")
+            meta = case.get("meta", {})
+            state = meta.get("state", "pending")
+            
+            # Skip cases that have already been resolved
+            if state in ("accepted", "promoted", "gold", "rejected"):
+                continue
+                
+            cid = meta.get("cluster_id", "Unassigned")
             clusters[cid] += 1
             
         return [
             {"cluster_id": cid, "count": count}
             for cid, count in clusters.items()
+            if count > 0
         ]
 
     def get_cluster_samples(self, component_id: str, cluster_id: str) -> List[Dict[str, Any]]:
@@ -199,3 +227,108 @@ class CoreUIBroker(AbstractSystemBroker):
         # 2. Apply the representative sub-sampling algorithm
         from crucible.core.clustering.review import _sample_cases
         return _sample_cases(cluster_cases)
+
+    # def promote_cluster(self, component_id: str, cluster_id: str) -> None:
+    #     """
+    #     Promotes a cluster representative to Golden and updates all staging records.
+    #     """
+    #     clean_id = component_id.lower().replace("_", "-")
+    #     storage = LocalStorage(component_name=clean_id)
+        
+    #     # Get the component config to retrieve the SUT wrapper command/settings
+    #     component_config = discover_config_components().get(clean_id, {})
+    #     if not isinstance(component_config, dict):
+    #         component_config = {"command": str(component_config)}
+            
+    #     command_string = component_config.get("command", "")
+    #     semantic_root = component_config.get("semantic_root", "")
+    #     sut_executable = create_sut_wrapper(command_string=command_string, semantic_root=semantic_root)
+        
+    #     # Import and invoke the verified core promotion routine
+    #     from crucible.core.promotion.promotion import promote_cluster_representative
+    #     promote_cluster_representative(storage, sut_executable, cluster_id)
+
+    def promote_cluster(self, component_id: str, cluster_id: str) -> None:
+        clean_id = component_id.lower().replace("_", "-")
+        storage = LocalStorage(component_name=clean_id)
+        
+        component_config = discover_config_components().get(clean_id, {})
+        if not isinstance(component_config, dict):
+            component_config = {"command": str(component_config)}
+            
+        command_string = component_config.get("command", "")
+        semantic_root = component_config.get("semantic_root", "")
+        sut_executable = create_sut_wrapper(command_string=command_string, semantic_root=semantic_root)
+        
+        from crucible.core.promotion.promotion import promote_cluster_representative
+        try:
+            promote_cluster_representative(storage, sut_executable, cluster_id)
+            logger.info(f"Successfully promoted cluster {cluster_id} for {clean_id}")
+        except Exception as e:
+            logger.exception(f"CRITICAL: Failed to promote cluster {cluster_id}: {e}")
+            raise
+
+    # def reject_cluster(self, component_id: str, cluster_id: str) -> None:
+    #     """
+    #     Rejects a cluster and updates the staging/rejection state.
+    #     """
+    #     clean_id = component_id.lower().replace("_", "-")
+    #     storage = LocalStorage(component_name=clean_id)
+        
+    #     # Import and invoke the core cluster rejection routine
+    #     from crucible.core.promotion.promotion import reject_cluster_representative
+    #     reject_cluster_representative(storage, cluster_id)
+
+    def reject_cluster(self, component_id: str, cluster_id: str) -> None:
+        """
+        Rejects an entire cluster and updates the staging/rejection state.
+        """
+        clean_id = component_id.lower().replace("_", "-")
+        storage = LocalStorage(component_name=clean_id)
+        from crucible.core.promotion.promotion import reject_cluster_representative
+        try:
+            reject_cluster_representative(storage, cluster_id)
+            logger.info(f"Successfully rejected cluster {cluster_id} for {clean_id}")
+        except Exception as e:
+            logger.exception(f"CRITICAL: Failed to reject cluster {cluster_id}: {e}")
+            raise
+
+    def get_suppressed_cluster_count(self, component_id: str) -> int:
+        clean_id = component_id.lower().replace("_", "-")
+        storage = LocalStorage(component_name=clean_id)
+        staging = storage.load_staging()
+        cases = staging.get("cases", [])
+        suppressed = set()
+        for case in cases:
+            meta = case.get("meta", {})
+            if meta.get("state") == "rejected":
+                cid = meta.get("cluster_id")
+                if cid:
+                    suppressed.add(cid)
+        return len(suppressed)
+
+    def get_suppressed_cluster_table(self, component_id: str) -> List[Dict[str, Any]]:
+        clean_id = component_id.lower().replace("_", "-")
+        storage = LocalStorage(component_name=clean_id)
+        staging = storage.load_staging()
+        cases = staging.get("cases", [])
+        clusters = defaultdict(int)
+        for case in cases:
+            meta = case.get("meta", {})
+            if meta.get("state") == "rejected":
+                cid = meta.get("cluster_id", "Unassigned")
+                clusters[cid] += 1
+        return [{"cluster_id": cid, "count": count} for cid, count in clusters.items()]
+
+    def unreject_cluster(self, component_id: str, cluster_id: str) -> None:
+        clean_id = component_id.lower().replace("_", "-")
+        storage = LocalStorage(component_name=clean_id)
+        from crucible.core.promotion.promotion import unreject_cluster_representative
+        try:
+            unreject_cluster_representative(storage, cluster_id)
+            logger.info(f"Successfully unsuppressed cluster {cluster_id} for {clean_id}")
+        except Exception as e:
+            logger.exception(f"CRITICAL: Failed to unsuppress cluster {cluster_id}: {e}")
+            raise
+
+    
